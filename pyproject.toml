@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "core-dispatch"
+version = "0.1.0"
+description = "AI-powered agent orchestration and radio dispatch system"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "click>=8.0.0",
+    "numpy>=1.20.0",
+    "sounddevice>=0.4.0",
+    "soundfile>=0.10.0",
+    "google-generativeai>=0.3.0",
+    "python-dotenv>=0.19.0",
+    "openai>=1.8.0",
+    "google-cloud-speech>=2.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black>=22.0",
+    "flake8>=4.0",
+]
+
+[project.scripts]
+core-dispatch = "launch_control.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/launch_control",
+    "src/agent_framework"
+]
+
