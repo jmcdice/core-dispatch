@@ -1,5 +1,6 @@
 # src/agent_framework/audio/receiver.py
 
+import json
 import asyncio
 import logging
 import numpy as np
@@ -203,16 +204,20 @@ class AudioReceiverAgent(BaseAgent):
         self.audio_frames = []
 
     async def _transcribe_audio(self, audio_data):
-        """Transcribe audio and call on_transcription callback."""
+        """Transcribe audio and save JSON output."""
         try:
             result: Optional[TranscriptionResult] = await self.transcription_service.transcribe(audio_data)
             if result and result.text:
                 self.logger.debug(f"Transcribed: {result.text}")
-                cb_result = self.on_transcription(result.text)
-                if asyncio.iscoroutine(cb_result):
-                    await cb_result
+    
+                # Save audio for debugging if enabled
+                audio_path = None
                 if self.debug_mode:
-                    self._save_debug_data(audio_data, result.text)
+                    audio_path = self._save_debug_data(audio_data, result.text)
+                    self.logger.debug(f"Audio file saved at: {audio_path}")
+    
+                # Save JSON output with optional audio path
+                self._save_json_output(transcription=result.text, audio_path=audio_path)
         except Exception as e:
             self.logger.error(f"Transcription error: {e}")
 
@@ -220,7 +225,8 @@ class AudioReceiverAgent(BaseAgent):
         """Test audio input configuration to ensure levels are okay."""
         duration = 2
         self.logger.info(f"Testing audio input for {duration} seconds...")
-
+    
+        # Record audio for the test duration
         recording = sd.rec(
             int(duration * self.config.sample_rate),
             samplerate=self.config.sample_rate,
@@ -229,27 +235,56 @@ class AudioReceiverAgent(BaseAgent):
             dtype='float32'
         )
         sd.wait()
+    
+        # Calculate RMS level of the recording
         rms = np.sqrt(np.mean(np.square(recording)))
-
+    
         self.logger.info(f"Current RMS level: {rms:.6f}")
         self.logger.info(f"Audio threshold: {self.config.audio_threshold:.6f}")
-
-        if rms < 0.001:
-            self.logger.warning("Very low audio levels detected")
+    
+        # Compare RMS to audio_threshold dynamically
+        if rms < self.config.audio_threshold:
+            self.logger.warning(f"RMS level ({rms:.6f}) is below the threshold ({self.config.audio_threshold:.6f}).")
         else:
-            self.logger.info("Audio input test passed")
+            self.logger.info("Audio input test passed.")
+    
+    def _save_json_output(self, transcription: str, audio_path: Optional[str]):
+        """Save transcription results as a JSON file to the queue directory."""
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        queue_dir = "dispatch_queue" # Queue directory for JSON files
+        os.makedirs(queue_dir, exist_ok=True)  # Ensure the directory exists
+    
+        json_data = {
+            "timestamp": datetime.now().isoformat(),
+            "transcription": transcription,
+        }
+    
+        # Include audio_file only if audio_path is provided
+        if audio_path:
+            json_data["audio_file"] = audio_path
+    
+        json_path = os.path.join(queue_dir, f"transcription_{timestamp}.json")
+        with open(json_path, 'w') as f:
+            json.dump(json_data, f, indent=4)
+            f.write('\n')
 
-    def _save_debug_data(self, audio_data, transcription):
-        """Save debug information to disk."""
+        self.logger.debug(f"Saved transcription JSON to {json_path}")
+
+    def _save_debug_data(self, audio_data, transcription: str) -> str:
+        """Save debug audio and transcription files."""
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         debug_dir = "debug/audio"
         os.makedirs(debug_dir, exist_ok=True)
-
-        # Save audio
-        audio_path = f"{debug_dir}/audio_{timestamp}.wav"
+    
+        # Save audio file
+        audio_path = os.path.join(debug_dir, f"audio_{timestamp}.wav")
         sf.write(audio_path, audio_data, self.config.sample_rate)
-
-        # Save transcription
-        trans_path = f"{debug_dir}/trans_{timestamp}.txt"
+    
+        # Save transcription text
+        trans_path = os.path.join(debug_dir, f"trans_{timestamp}.txt")
         with open(trans_path, 'w') as f:
             f.write(transcription)
+    
+        self.logger.debug(f"Debug files saved: {audio_path}, {trans_path}")
+        return audio_path  # Return the audio path
+    
