@@ -1,4 +1,4 @@
-# src/agent_framework/audio/transcription.py
+# src/core_dispatch/agent_framework/audio/transcription.py
 
 from abc import ABC, abstractmethod
 import io
@@ -12,7 +12,7 @@ from google.api_core.client_options import ClientOptions
 from google.cloud.speech_v2 import SpeechClient
 from google.cloud.speech_v2.types import cloud_speech
 
-from launch_control.config.settings import (
+from core_dispatch.launch_control.config.settings import (
     TRANSCRIPTION_SERVICE_TYPE,
     OPENAI_API_KEY,
     GOOGLE_CLOUD_PROJECT

@@ -4,8 +4,10 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from src.agent_framework.audio.receiver import AudioReceiverAgent, AudioConfig
-from launch_control.config.settings import (
+from src.core_dispatch.agent_framework.audio.receiver import AudioReceiverAgent, AudioConfig
+
+from core_dispatch.launch_control.config.settings import (
+    LOGS_DIR,
     SAMPLE_RATE,
     CHANNELS,
     AUDIO_DEVICE_INDEX,
@@ -17,9 +19,14 @@ from launch_control.config.settings import (
     POST_ROLL_DURATION,
     TRANSCRIPTION_SERVICE_TYPE,
     OPENAI_API_KEY,
-    GOOGLE_CLOUD_PROJECT,
-    LOGS_DIR
+    GOOGLE_CLOUD_PROJECT
 )
+
+
+# Suppress debug logs from specific libraries
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 
 # Ensure necessary directories exist
 os.makedirs(LOGS_DIR, exist_ok=True)

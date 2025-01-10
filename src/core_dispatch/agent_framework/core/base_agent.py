@@ -1,4 +1,4 @@
-# src/agent_framework/core/base_agent.py 
+# src/core_dispatch/agent_framework/core/base_agent.py
 
 from abc import ABC, abstractmethod
 import logging

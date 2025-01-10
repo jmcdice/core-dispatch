@@ -1,4 +1,4 @@
-# src/agent_framework/audio/receiver.py
+# src/core_dispatch/agent_framework/audio/receiver.py
 
 import json
 import asyncio
@@ -11,16 +11,18 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional, Callable, Any
 
-from agent_framework.core.base_agent import BaseAgent
-from agent_framework.audio.transcription import (
+from core_dispatch.agent_framework.core.base_agent import BaseAgent
+from core_dispatch.agent_framework.audio.transcription import (
     TranscriptionConfig,
     TranscriptionResult,
     create_transcription_service,
     TranscriptionService
 )
 
-# Import settings from launch_control.config
-from launch_control.config.settings import (
+LOCK_FILE = '/tmp/tx_rx_lock'
+
+# Import settings from core_dispatch.launch_control.config
+from core_dispatch.launch_control.config.settings import (
     SAMPLE_RATE,
     CHANNELS,
     AUDIO_DEVICE_INDEX,
@@ -140,6 +142,10 @@ class AudioReceiverAgent(BaseAgent):
 
     def _audio_callback(self, indata, frames, time_info, status):
         """Handle incoming audio data."""
+        if os.path.exists(LOCK_FILE):
+            # self.logger.info("Lock file detected. Pausing audio processing.")
+            return None, sd.CallbackFlags()
+
         if status:
             self.logger.warning(f"Audio stream status: {status}")
 
@@ -208,19 +214,24 @@ class AudioReceiverAgent(BaseAgent):
         try:
             result: Optional[TranscriptionResult] = await self.transcription_service.transcribe(audio_data)
             if result and result.text:
+                # Filter out unwanted transcriptions
+                ignored_transcriptions = {".", ". . .", "you"}
+                if result.text.strip() in ignored_transcriptions:
+                    self.logger.info(f"Ignored transcription: '{result.text.strip()}'")
+                    return  # Skip processing
+    
                 self.logger.debug(f"Transcribed: {result.text}")
     
                 # Save audio for debugging if enabled
                 audio_path = None
                 if self.debug_mode:
                     audio_path = self._save_debug_data(audio_data, result.text)
-                    self.logger.debug(f"Audio file saved at: {audio_path}")
     
                 # Save JSON output with optional audio path
                 self._save_json_output(transcription=result.text, audio_path=audio_path)
         except Exception as e:
             self.logger.error(f"Transcription error: {e}")
-
+    
     async def _test_audio_input(self):
         """Test audio input configuration to ensure levels are okay."""
         duration = 2

@@ -27,11 +27,10 @@ dev = [
 ]
 
 [project.scripts]
-core-dispatch = "launch_control.cli:cli"
+core-dispatch = "core_dispatch.launch_control.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = [
-    "src/launch_control",
-    "src/agent_framework"
+    "src"
 ]
 

@@ -1,4 +1,4 @@
-# src/agent_framework/audio/transmitter.py
+# src/core_dispatch/agent_framework/audio/transmitter.py
 
 import os
 import sys
@@ -21,24 +21,23 @@ from typing import Optional, Dict
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Local imports
-import agent_framework.core.base_agent as base_agent
-from agent_framework.core.base_agent import BaseAgent
+import core_dispatch.agent_framework.core.base_agent as base_agent
+from core_dispatch.agent_framework.core.base_agent import BaseAgent
 
 # TTS services (NEW)
-from agent_framework.utils.tts_service import (
+from core_dispatch.agent_framework.utils.tts_service import (
     OpenAITTSService,
     UnrealSpeechTTSService
 )
 
 # Use your own path to settings
-from launch_control.config.settings import (
+from core_dispatch.launch_control.config.settings import (
     OPENAI_API_KEY,
     TX_SAMPLE_RATE,
     TX_CHANNELS,
     TX_AUDIO_DEVICE_INDEX,
     AUDIO_DEVICE,
     PROCESSED_FILES_JSON,
-    VOICE_NAME,
     TTS_AUDIO_DIR,
     CONTEXT_EXPIRATION,
     RESPONSE_QUEUE_MAX_SIZE,
@@ -66,7 +65,6 @@ class AudioTransmitterConfig:
     audio_device: str = AUDIO_DEVICE
     api_key: str = OPENAI_API_KEY
     processed_files_json: str = PROCESSED_FILES_JSON
-    voice_name: str = VOICE_NAME
     tts_audio_dir: str = TTS_AUDIO_DIR
     context_expiration: timedelta = CONTEXT_EXPIRATION
     response_queue_max_size: int = RESPONSE_QUEUE_MAX_SIZE
@@ -227,9 +225,9 @@ class AudioTransmitterAgent(BaseAgent):
                     # Provider-specific voice
                     voice = persona_data['voices'].get(
                         self.config.tts_provider,
-                        self.config.default_voice.get(self.config.tts_provider)
+                        self.config.default_voice  # Use the default voice string directly
                     )
-
+                    
                     # Update conversation history
                     self._update_conversation_history(timestamp, transcription, tool_response)
                     # Build messages for ChatGPT
@@ -255,7 +253,7 @@ class AudioTransmitterAgent(BaseAgent):
                 if response_item:
                     response_text = response_item['text']
                     voice = response_item['voice']
-                    self.logger.debug(f"Transmitting response: {response_text}")
+                    # self.logger.debug(f"Transmitting response: {response_text}")
                     audio_file = self._text_to_speech(response_text, voice)
                     if audio_file:
                         self._play_audio(audio_file)
@@ -311,28 +309,27 @@ class AudioTransmitterAgent(BaseAgent):
 
     def _load_persona(self, persona_name: str):
         """Load a single persona from the `personas` folder."""
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
         personas_dir = os.path.join(project_root, 'personas')
         persona_file = os.path.join(personas_dir, f"{persona_name}.json")
-
+    
         if not os.path.exists(persona_file):
             self.logger.error(f"Persona file '{persona_file}' does not exist.")
             return {}
-
+    
         try:
             with open(persona_file, 'r') as f:
                 data = json.load(f)
             prompt = data.get('prompt', '')
             voices = data.get('voices', {})
             activation_phrases = data.get('activation_phrases', [])
-
-            # Check for duplicate activation phrases
+    
             for phrase in activation_phrases:
                 if phrase.lower() in self.activation_phrases_set:
                     self.logger.error(f"Duplicate activation phrase '{phrase}' in persona '{persona_name}'.")
                     continue
                 self.activation_phrases_set.add(phrase.lower())
-
+    
             return {
                 'prompt': prompt,
                 'voices': voices,
@@ -341,10 +338,10 @@ class AudioTransmitterAgent(BaseAgent):
         except Exception as e:
             self.logger.error(f"Error loading persona '{persona_name}': {e}")
             return {}
-
+    
     def _load_all_personas(self):
         """Scan the personas folder and load them all."""
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
         personas_dir = os.path.join(project_root, 'personas')
         persona_files = [f for f in os.listdir(personas_dir) if f.endswith('.json')]
         for f in persona_files:
@@ -352,7 +349,7 @@ class AudioTransmitterAgent(BaseAgent):
             p_data = self._load_persona(persona_name)
             if p_data:
                 self.personas[persona_name] = p_data
-
+    
     def _load_new_transcriptions(self):
         """Return list of (timestamp, transcription, tool_response, filename) for new JSON files."""
         results = []
