@@ -55,6 +55,8 @@ from core_dispatch.launch_control.config.settings import (
 
 LOCK_FILE = '/tmp/tx_rx_lock'
 
+CONVERSATION_LOG_FILE = "conversation_log.txt"
+
 
 @dataclass
 class AudioTransmitterConfig:
@@ -173,6 +175,7 @@ class AudioTransmitterAgent(BaseAgent):
         if provider == 'openai':
             if not self.client:
                 self.logger.error("OpenAI TTS selected, but 'self.client' is None (import error?).")
+                self.logger.info("Using OpenAI TTS Service.")
                 return
             # We pass the openai client plus the directory for debug audio
             self.tts_service = OpenAITTSService(self.client, self.config.tts_audio_dir)
@@ -180,6 +183,7 @@ class AudioTransmitterAgent(BaseAgent):
         elif provider == 'unrealspeech':
             if not self.config.unrealspeech_api_key:
                 self.logger.error("UnrealSpeech TTS selected but no API key provided.")
+                self.logger.info("Using UnrealSpeech TTS Service.")
                 return
             self.tts_service = UnrealSpeechTTSService(
                 api_key=self.config.unrealspeech_api_key,
@@ -237,13 +241,15 @@ class AudioTransmitterAgent(BaseAgent):
                     if response_text:
                         # Enqueue the response for TTS & playback
                         self.response_queue.put({'text': response_text, 'voice': voice})
+                        self._log_conversation(transcription, response_text, responding_persona)
+
                 else:
                     self.logger.info("No active persona or ignoring message.")
 
                 # Move file to processed
                 self._move_processed_file(filepath, filename)
 
-            time.sleep(1)  # avoid tight loop
+            # time.sleep(1)  # avoid tight loop
 
     def _transmit_responses(self):
         """Continuously pulls responses from queue, runs TTS, and plays the audio."""
@@ -308,10 +314,11 @@ class AudioTransmitterAgent(BaseAgent):
         return None
 
     def _load_persona(self, persona_name: str):
-        """Load a single persona from the `personas` folder."""
+        """Load a single profile from the `personas` folder."""
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-        personas_dir = os.path.join(project_root, 'personas')
-        persona_file = os.path.join(personas_dir, f"{persona_name}.json")
+        profiles_dir = os.path.join(project_root, 'personas')
+        profile_dir = os.path.join(profiles_dir, persona_name)  # Directory for the persona
+        persona_file = os.path.join(profile_dir, f"{persona_name}.json")  # JSON file path
     
         if not os.path.exists(persona_file):
             self.logger.error(f"Persona file '{persona_file}' does not exist.")
@@ -324,6 +331,7 @@ class AudioTransmitterAgent(BaseAgent):
             voices = data.get('voices', {})
             activation_phrases = data.get('activation_phrases', [])
     
+            # Check for duplicate activation phrases
             for phrase in activation_phrases:
                 if phrase.lower() in self.activation_phrases_set:
                     self.logger.error(f"Duplicate activation phrase '{phrase}' in persona '{persona_name}'.")
@@ -338,17 +346,19 @@ class AudioTransmitterAgent(BaseAgent):
         except Exception as e:
             self.logger.error(f"Error loading persona '{persona_name}': {e}")
             return {}
-    
+
     def _load_all_personas(self):
-        """Scan the personas folder and load them all."""
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-        personas_dir = os.path.join(project_root, 'personas')
-        persona_files = [f for f in os.listdir(personas_dir) if f.endswith('.json')]
-        for f in persona_files:
-            persona_name = os.path.splitext(f)[0]
-            p_data = self._load_persona(persona_name)
-            if p_data:
-                self.personas[persona_name] = p_data
+        """Scan the profiles folder and load all profiles."""
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+        profiles_dir = os.path.join(project_root, 'profiles')
+        profile_dirs = [d for d in os.listdir(profiles_dir) if os.path.isdir(os.path.join(profiles_dir, d))]
+    
+        for profile in profile_dirs:
+            persona_file = os.path.join(profiles_dir, profile, f"{profile}.json")
+            if os.path.exists(persona_file):
+                p_data = self._load_persona(profile)
+                if p_data:
+                    self.personas[profile] = p_data
     
     def _load_new_transcriptions(self):
         """Return list of (timestamp, transcription, tool_response, filename) for new JSON files."""
@@ -423,8 +433,8 @@ class AudioTransmitterAgent(BaseAgent):
                 messages=messages
             )
             response_text = completion.choices[0].message.content.strip()
-            self.logger.info(f"Generated response: {response_text[:60]} ...")
-            self.transcription_logger.info(f"{responding_persona} | {response_text}")
+            # self.logger.info(f"Generated response: {response_text[:60]} ...")
+            self.transcription_logger.info(f"{responding_persona} | {response_text[:60]} ...")
 
             # Add as assistant message in conversation
             self.conversation_history.append({
@@ -475,11 +485,19 @@ class AudioTransmitterAgent(BaseAgent):
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Error playing audio: {e}")
         finally:
-            time.sleep(2)
+            time.sleep(1)
             self._remove_lock()
             if not self.debug_mode and os.path.exists(audio_file):
                 os.remove(audio_file)
                 self.logger.info(f"Removed temporary audio file: {audio_file}")
+
+    def _log_conversation(self, transcription, response, persona_name):
+        """Log the conversation to a single file, including the persona name."""
+        with open(CONVERSATION_LOG_FILE, "a") as f:
+            f.write(f"User: {transcription}\n")
+            f.write(f"{persona_name}: {response}\n")
+            f.write("-" * 40 + "\n")
+    
 
     def _create_lock(self):
         """Create a lock file to signal the receiver to pause."""
@@ -487,10 +505,12 @@ class AudioTransmitterAgent(BaseAgent):
             f.write('locked')
 
     def _remove_lock(self):
-        """Remove the lock file to signal the receiver to resume."""
+        """Remove the lock file to signal the receiver to resume after a small delay."""
         if os.path.exists(LOCK_FILE):
+            time.sleep(1)  # Delay to allow the playback to fully finish
             os.remove(LOCK_FILE)
-
+            # self.logger.info("Lock file removed. Receiver can resume.")
+    
     def _get_military_time(self):
         return datetime.now().strftime('%H:%M')
 

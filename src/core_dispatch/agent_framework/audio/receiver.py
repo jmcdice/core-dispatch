@@ -1,5 +1,6 @@
 # src/core_dispatch/agent_framework/audio/receiver.py
 
+import re
 import json
 import asyncio
 import logging
@@ -214,13 +215,12 @@ class AudioReceiverAgent(BaseAgent):
         try:
             result: Optional[TranscriptionResult] = await self.transcription_service.transcribe(audio_data)
             if result and result.text:
-                # Filter out unwanted transcriptions
-                ignored_transcriptions = {".", ". . .", "you"}
-                if result.text.strip() in ignored_transcriptions:
-                    self.logger.info(f"Ignored transcription: '{result.text.strip()}'")
-                    return  # Skip processing
-    
                 self.logger.debug(f"Transcribed: {result.text}")
+    
+                # Define regex to match unwanted responses
+                if re.fullmatch(r"[. ]+|you", result.text.strip(), re.IGNORECASE):
+                    self.logger.info(f"Ignored transcription: '{result.text.strip()}'")
+                    return
     
                 # Save audio for debugging if enabled
                 audio_path = None
@@ -231,6 +231,7 @@ class AudioReceiverAgent(BaseAgent):
                 self._save_json_output(transcription=result.text, audio_path=audio_path)
         except Exception as e:
             self.logger.error(f"Transcription error: {e}")
+    
     
     async def _test_audio_input(self):
         """Test audio input configuration to ensure levels are okay."""

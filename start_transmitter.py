@@ -3,6 +3,8 @@
 import asyncio
 import logging
 import os
+import argparse
+from pathlib import Path
 from core_dispatch.agent_framework.audio.transmitter import AudioTransmitterAgent, AudioTransmitterConfig
 from core_dispatch.launch_control.config.settings import (
     TX_SAMPLE_RATE,
@@ -45,8 +47,33 @@ logging.basicConfig(
     ]
 )
 
+def get_personas_from_profile(profile_name: str) -> list:
+    """Retrieve persona files from a given profile directory."""
+    profiles_dir = Path("src/core_dispatch/personas")
+    profile_path = profiles_dir / profile_name
+
+    if not profile_path.exists():
+        raise FileNotFoundError(f"Profile '{profile_name}' does not exist in {profiles_dir}")
+
+    if profile_path.is_file() and profile_path.suffix == ".json":
+        # Single persona file
+        return [profile_path.stem]
+    elif profile_path.is_dir():
+        # Directory containing multiple persona files
+        return [file.stem for file in profile_path.glob("*.json")]
+
+    raise ValueError(f"Invalid profile path: {profile_path}. It should be a JSON file or a directory of JSON files.")
+
 async def main():
     """Main entry point for starting the audio transmitter service."""
+    # Retrieve profile argument
+    import argparse
+    parser = argparse.ArgumentParser(description="Start the audio transmitter")
+    parser.add_argument("--profile", type=str, required=True, help="Profile or profile set to load")
+    args = parser.parse_args()
+
+    profile = args.profile
+
     # Create configuration for the transmitter
     config = AudioTransmitterConfig(
         sample_rate=TX_SAMPLE_RATE,
@@ -73,15 +100,15 @@ async def main():
     agent = AudioTransmitterAgent(
         config=config,
         debug_mode=True,
-        persona_names=["the_dude"]  # Specify the persona(s) to load
+        persona_names=[profile]  # Load the specified profile
     )
-    
+
     try:
         # Start the transmitter
         await agent.initialize()
         await agent.start()
 
-        print("Audio transmitter is running. Press Ctrl+C to stop.")
+        # print("Audio transmitter is running. Press Ctrl+C to stop.")
         while True:
             await asyncio.sleep(1)
 

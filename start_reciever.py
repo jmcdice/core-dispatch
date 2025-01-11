@@ -75,7 +75,7 @@ async def main():
         await agent.start()
 
         # Keep the agent running indefinitely
-        print("Audio receiver is running. Press Ctrl+C to stop.")
+        # print("Audio receiver is running. Press Ctrl+C to stop.")
         while True:
             await asyncio.sleep(1)
 
