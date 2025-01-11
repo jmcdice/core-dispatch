@@ -83,7 +83,7 @@ class AudioTransmitterConfig:
 
 class AudioTransmitterAgent(BaseAgent):
     """
-    A refactored transmitter that:
+    A transmitter that:
       1. Watches for new transcriptions in TRANSCRIPTIONS_DIR
       2. Determines if (and which) persona should respond
       3. Generates the AI response
@@ -91,13 +91,13 @@ class AudioTransmitterAgent(BaseAgent):
       5. Plays/“transmits” the audio
       6. Moves processed transcriptions and handles cleanup
     """
-
     def __init__(self, config: AudioTransmitterConfig, debug_mode: bool = False,
-                 persona_names=None, load_all_personas=False):
+                 persona_names=None, profile_name=None, load_all_personas=False):
         super().__init__()
         self.config = config
         self.debug_mode = debug_mode
-
+        self.profile_name = profile_name  # Store profile name
+    
         # Lazy import of OpenAI so we can handle missing dependencies
         try:
             from openai import OpenAI
@@ -134,19 +134,22 @@ class AudioTransmitterAgent(BaseAgent):
             os.remove(LOCK_FILE)
             self.logger.info("Removed stale lock file on startup.")
 
+        # Load personas
         if self.load_personas_on_init:
             self._load_all_personas()
         else:
             for name in self.persona_names:
                 self.logger.info(f"Loading persona '{name}'.")
                 p_data = self._load_persona(name)
-                self.personas[name] = p_data
+                if p_data:
+                    self.personas[name] = p_data
 
         if not self.personas:
             self.logger.error("No personas loaded. The transmitter won't respond to anything.")
 
         loaded_list = ', '.join(self.personas.keys()) if self.personas else "None"
         self.logger.info(f"Transmitter ready with personas: {loaded_list}")
+
 
     def _initialize_logging(self):
         """Initialize file-based logging for transmitter and transcriptions."""
@@ -172,10 +175,11 @@ class AudioTransmitterAgent(BaseAgent):
         This is where we unify logic so `_text_to_speech` can just call self.tts_service.synthesize_text().
         """
         provider = self.config.tts_provider.lower()
+        self.logger.info(f"Initializing TTS service: {provider}")
+
         if provider == 'openai':
             if not self.client:
                 self.logger.error("OpenAI TTS selected, but 'self.client' is None (import error?).")
-                self.logger.info("Using OpenAI TTS Service.")
                 return
             # We pass the openai client plus the directory for debug audio
             self.tts_service = OpenAITTSService(self.client, self.config.tts_audio_dir)
@@ -183,7 +187,6 @@ class AudioTransmitterAgent(BaseAgent):
         elif provider == 'unrealspeech':
             if not self.config.unrealspeech_api_key:
                 self.logger.error("UnrealSpeech TTS selected but no API key provided.")
-                self.logger.info("Using UnrealSpeech TTS Service.")
                 return
             self.tts_service = UnrealSpeechTTSService(
                 api_key=self.config.unrealspeech_api_key,
@@ -314,11 +317,10 @@ class AudioTransmitterAgent(BaseAgent):
         return None
 
     def _load_persona(self, persona_name: str):
-        """Load a single profile from the `personas` folder."""
+        """Load a single persona from the specified profile."""
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-        profiles_dir = os.path.join(project_root, 'personas')
-        profile_dir = os.path.join(profiles_dir, persona_name)  # Directory for the persona
-        persona_file = os.path.join(profile_dir, f"{persona_name}.json")  # JSON file path
+        personas_dir = os.path.join(project_root, 'personas', self.profile_name)  # Add self.profile_name to the path
+        persona_file = os.path.join(personas_dir, f"{persona_name}.json")  # Construct full path to persona file
     
         if not os.path.exists(persona_file):
             self.logger.error(f"Persona file '{persona_file}' does not exist.")
@@ -346,7 +348,7 @@ class AudioTransmitterAgent(BaseAgent):
         except Exception as e:
             self.logger.error(f"Error loading persona '{persona_name}': {e}")
             return {}
-
+    
     def _load_all_personas(self):
         """Scan the profiles folder and load all profiles."""
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
@@ -434,7 +436,7 @@ class AudioTransmitterAgent(BaseAgent):
             )
             response_text = completion.choices[0].message.content.strip()
             # self.logger.info(f"Generated response: {response_text[:60]} ...")
-            self.transcription_logger.info(f"{responding_persona} | {response_text[:60]} ...")
+            self.transcription_logger.info(f"{responding_persona} | {response_text}")
 
             # Add as assistant message in conversation
             self.conversation_history.append({

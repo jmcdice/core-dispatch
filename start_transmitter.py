@@ -55,24 +55,32 @@ def get_personas_from_profile(profile_name: str) -> list:
     if not profile_path.exists():
         raise FileNotFoundError(f"Profile '{profile_name}' does not exist in {profiles_dir}")
 
-    if profile_path.is_file() and profile_path.suffix == ".json":
-        # Single persona file
-        return [profile_path.stem]
-    elif profile_path.is_dir():
+    if profile_path.is_dir():
         # Directory containing multiple persona files
-        return [file.stem for file in profile_path.glob("*.json")]
+        #return [f.stem for f in profile_path.glob("*.json")]
+        return [file.stem for file in profile_path.glob("*.json") if file.is_file()]
 
-    raise ValueError(f"Invalid profile path: {profile_path}. It should be a JSON file or a directory of JSON files.")
+    else:
+        raise ValueError(f"Profile '{profile_name}' is not a valid directory.")
 
 async def main():
     """Main entry point for starting the audio transmitter service."""
     # Retrieve profile argument
-    import argparse
     parser = argparse.ArgumentParser(description="Start the audio transmitter")
     parser.add_argument("--profile", type=str, required=True, help="Profile or profile set to load")
     args = parser.parse_args()
 
     profile = args.profile
+
+    # Get personas from the profile
+    try:
+        personas = get_personas_from_profile(profile)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        return
+    except ValueError as e:
+        print(f"Error: {e}")
+        return
 
     # Create configuration for the transmitter
     config = AudioTransmitterConfig(
@@ -96,19 +104,20 @@ async def main():
         default_voice=DEFAULT_VOICE
     )
 
-    # Initialize the transmitter agent
     agent = AudioTransmitterAgent(
         config=config,
         debug_mode=True,
-        persona_names=[profile]  # Load the specified profile
+        persona_names=personas,
+        profile_name=profile
     )
+    
 
     try:
         # Start the transmitter
         await agent.initialize()
         await agent.start()
 
-        # print("Audio transmitter is running. Press Ctrl+C to stop.")
+        print("Audio transmitter is running. Press Ctrl+C to stop.")
         while True:
             await asyncio.sleep(1)
 
