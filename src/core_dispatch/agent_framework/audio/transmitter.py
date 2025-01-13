@@ -1,5 +1,3 @@
-# src/core_dispatch/agent_framework/audio/transmitter.py
-
 import os
 import sys
 import shutil
@@ -24,7 +22,10 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import core_dispatch.agent_framework.core.base_agent as base_agent
 from core_dispatch.agent_framework.core.base_agent import BaseAgent
 
-# TTS services (NEW)
+# Import your tool(s)
+from core_dispatch.agent_framework.tools.tool_inventory_lookup import InventoryLookupTool
+
+# TTS services
 from core_dispatch.agent_framework.utils.tts_service import (
     OpenAITTSService,
     UnrealSpeechTTSService
@@ -54,7 +55,6 @@ from core_dispatch.launch_control.config.settings import (
 )
 
 LOCK_FILE = '/tmp/tx_rx_lock'
-
 CONVERSATION_LOG_FILE = "conversation_log.txt"
 
 
@@ -78,7 +78,7 @@ class AudioTransmitterConfig:
     transcriptions_log_file: str = TRANSCRIPTIONS_LOG_FILE
     tts_provider: str = TTS_PROVIDER
     unrealspeech_api_key: Optional[str] = UNREALSPEECH_API_KEY
-    default_voice: Dict[str, str] = None  # e.g., {"openai": "some_voice_id"}
+    default_voice: Dict[str, str] = None
 
 
 class AudioTransmitterAgent(BaseAgent):
@@ -86,18 +86,21 @@ class AudioTransmitterAgent(BaseAgent):
     A transmitter that:
       1. Watches for new transcriptions in TRANSCRIPTIONS_DIR
       2. Determines if (and which) persona should respond
-      3. Generates the AI response
-      4. Converts AI response to audio (TTS)
-      5. Plays/“transmits” the audio
-      6. Moves processed transcriptions and handles cleanup
+      3. Generates the AI response (GPT-4)
+      4. Handles tool calls in a two-pass approach:
+         - pass #1: parse SAY lines (immediate TTS) & TOOL_CALL lines (invoke tool)
+         - pass #2: feed the tool result back to GPT for a final user-friendly message
+      5. Converts final user-facing text to audio (TTS)
+      6. Plays the audio
+      7. Moves processed transcriptions and handles cleanup
     """
     def __init__(self, config: AudioTransmitterConfig, debug_mode: bool = False,
                  persona_names=None, profile_name=None, load_all_personas=False):
         super().__init__()
         self.config = config
         self.debug_mode = debug_mode
-        self.profile_name = profile_name  # Store profile name
-    
+        self.profile_name = profile_name
+
         # Lazy import of OpenAI so we can handle missing dependencies
         try:
             from openai import OpenAI
@@ -122,9 +125,15 @@ class AudioTransmitterAgent(BaseAgent):
         self.load_personas_on_init = load_all_personas
         self.persona_names = persona_names if persona_names else []
 
-        # TTS service (NEW)
+        # TTS service
         self.tts_service = None
         self._init_tts_service()
+
+        # Tools dictionary
+        # If you add more, just register them here
+        self.tools = {
+            "InventoryLookupTool": InventoryLookupTool
+        }
 
         # Threads
         self.generator_thread = None
@@ -150,7 +159,6 @@ class AudioTransmitterAgent(BaseAgent):
         loaded_list = ', '.join(self.personas.keys()) if self.personas else "None"
         self.logger.info(f"Transmitter ready with personas: {loaded_list}")
 
-
     def _initialize_logging(self):
         """Initialize file-based logging for transmitter and transcriptions."""
         logging.basicConfig(
@@ -170,10 +178,7 @@ class AudioTransmitterAgent(BaseAgent):
         self.transcription_logger.addHandler(transcription_handler)
 
     def _init_tts_service(self):
-        """
-        Configure the TTS service class based on self.config.tts_provider.
-        This is where we unify logic so `_text_to_speech` can just call self.tts_service.synthesize_text().
-        """
+        """Configure the TTS service class based on self.config.tts_provider."""
         provider = self.config.tts_provider.lower()
         self.logger.info(f"Initializing TTS service: {provider}")
 
@@ -181,7 +186,6 @@ class AudioTransmitterAgent(BaseAgent):
             if not self.client:
                 self.logger.error("OpenAI TTS selected, but 'self.client' is None (import error?).")
                 return
-            # We pass the openai client plus the directory for debug audio
             self.tts_service = OpenAITTSService(self.client, self.config.tts_audio_dir)
 
         elif provider == 'unrealspeech':
@@ -232,27 +236,160 @@ class AudioTransmitterAgent(BaseAgent):
                     # Provider-specific voice
                     voice = persona_data['voices'].get(
                         self.config.tts_provider,
-                        self.config.default_voice  # Use the default voice string directly
+                        self.config.default_voice
                     )
-                    
+
                     # Update conversation history
                     self._update_conversation_history(timestamp, transcription, tool_response)
-                    # Build messages for ChatGPT
+                    # Build messages for GPT
                     messages = self._prepare_chat_messages(persona_data)
 
-                    response_text = self._generate_chat_completion(messages, responding_persona, timestamp)
-                    if response_text:
-                        # Enqueue the response for TTS & playback
-                        self.response_queue.put({'text': response_text, 'voice': voice})
-                        self._log_conversation(transcription, response_text, responding_persona)
+                    # -- TWO-PASS COMPLETION --
+                    # Pass #1: AI might produce SAY lines (immediate TTS) & TOOL_CALL
+                    first_pass_text = self._call_gpt4(messages, responding_persona, timestamp)
 
+                    # Parse that text line-by-line
+                    tool_result = None
+                    lines_pass1 = first_pass_text.splitlines()
+                    final_user_text_lines_pass1 = []
+                    for line in lines_pass1:
+                        line_stripped = line.strip()
+                        if line_stripped.startswith("SAY:"):
+                            # Immediate TTS
+                            say_text = line_stripped.replace("SAY:", "").strip()
+                            self._speak_immediately(say_text)
+                            continue
+                        if line_stripped.startswith("TOOL_CALL"):
+                            tool_result = self._invoke_tool(line_stripped)
+                            continue
+                        # Anything else is user text (but we might wait until pass #2 to finalize)
+                        final_user_text_lines_pass1.append(line_stripped)
+
+                    # If a tool was called, we append a TOOL_RESPONSE line to the conversation
+                    second_pass_text = ""
+                    if tool_result:
+                        # e.g. "TOOL_RESPONSE InventoryLookupTool: organic almond milk 10 in aisle 5"
+                        tool_resp_line = f"TOOL_RESPONSE {tool_result}"
+                        self.logger.info(f"Inserting tool response into conversation: {tool_resp_line}")
+                        self.conversation_history.append({
+                            'timestamp': datetime.now(tz=timestamp.tzinfo),
+                            'role': 'assistant',
+                            'content': tool_resp_line
+                        })
+                        # Rebuild messages with updated conversation
+                        messages2 = self._prepare_chat_messages(persona_data)
+                        # Pass #2: Final user-friendly text
+                        second_pass_text = self._call_gpt4(messages2, responding_persona, timestamp)
+
+                    # If second_pass_text is present, use that as final
+                    # else if there's leftover lines from pass1, we can treat them as final
+                    if second_pass_text:
+                        final_user_text = second_pass_text
+                    else:
+                        final_user_text = "\n".join(final_user_text_lines_pass1).strip()
+
+                    if final_user_text:
+                        # Enqueue the response for TTS & playback
+                        self.response_queue.put({'text': final_user_text, 'voice': voice})
+                        self._log_conversation(transcription, final_user_text, responding_persona)
                 else:
                     self.logger.info("No active persona or ignoring message.")
 
                 # Move file to processed
                 self._move_processed_file(filepath, filename)
 
-            # time.sleep(1)  # avoid tight loop
+            time.sleep(1)
+
+    def _call_gpt4(self, messages, responding_persona, original_ts) -> str:
+        """
+        Helper method to call GPT-4 and append the entire AI output to conversation history.
+        Returns the raw text from GPT-4 (not yet TTS or anything).
+        """
+        if not self.client:
+            self.logger.error("OpenAI client is not available.")
+            return ""
+
+        try:
+            completion = self.client.chat.completions.create(
+                model='gpt-4',
+                messages=messages
+            )
+            ai_text = completion.choices[0].message.content.strip()
+            self.transcription_logger.info(f"{responding_persona} | {ai_text}")
+
+            # Add entire AI text to conversation
+            self.conversation_history.append({
+                'timestamp': datetime.now(tz=original_ts.tzinfo),
+                'role': 'assistant',
+                'content': ai_text
+            })
+            self.assistant_responses.append(ai_text)
+            if len(self.assistant_responses) > 10:
+                self.assistant_responses = self.assistant_responses[-10:]
+
+            return ai_text
+        except Exception as e:
+            self.logger.error(f"Error generating response (GPT-4): {e}")
+            return ""
+
+    def _speak_immediately(self, text: str):
+        self.logger.info(f"Immediate TTS: {text}")
+        # If the active persona is known, use that persona's openai voice
+        voice = None
+        if self.active_persona:
+            persona_data = self.personas.get(self.active_persona, {})
+            voice = persona_data['voices'].get('openai', 'ash')  # fallback to 'ash'
+    
+        audio_file = self._text_to_speech(text, voice)
+        if audio_file:
+            self._play_audio(audio_file)
+    
+    def _invoke_tool(self, tool_line: str) -> str:
+        """
+        Example: "TOOL_CALL InventoryLookupTool: lookup organic almond milk"
+        We parse out the tool name and method, instantiate the tool, call the method,
+        and return something like "InventoryLookupTool: organic almond milk 10 in aisle 5"
+        so we can feed it back as a TOOL_RESPONSE.
+        """
+        line_stripped = tool_line.strip()
+        if not line_stripped.startswith("TOOL_CALL"):
+            return "Invalid tool call."
+
+        # Remove "TOOL_CALL"
+        tool_line_inner = line_stripped[len("TOOL_CALL"):].strip()
+        # e.g. "InventoryLookupTool: lookup organic almond milk"
+
+        # Split on first colon
+        parts = tool_line_inner.split(":", 1)
+        if len(parts) < 2:
+            return "Invalid format, no colon found after tool name."
+
+        tool_name = parts[0].strip()  # "InventoryLookupTool"
+        remainder = parts[1].strip()  # "lookup organic almond milk"
+
+        subparts = remainder.split(" ", 1)
+        if len(subparts) < 2:
+            return f"{tool_name}: no method args."
+
+        method_name = subparts[0].strip()  # "lookup"
+        method_args = subparts[1].strip()  # "organic almond milk"
+
+        if tool_name not in self.tools:
+            return f"{tool_name}: not found in self.tools."
+
+        tool_class = self.tools[tool_name]
+        tool_instance = tool_class()
+
+        # Attempt to call the method
+        if not hasattr(tool_instance, method_name):
+            return f"{tool_name}: method '{method_name}' not found."
+
+        method = getattr(tool_instance, method_name)
+        result = method(method_args)  # e.g. "10 in aisle 5" or "not_found"
+
+        # We'll return a single string we can feed back as a TOOL_RESPONSE
+        # e.g. "InventoryLookupTool: organic almond milk 10 in aisle 5"
+        return f"{tool_name}: {method_args} {result}"
 
     def _transmit_responses(self):
         """Continuously pulls responses from queue, runs TTS, and plays the audio."""
@@ -262,7 +399,6 @@ class AudioTransmitterAgent(BaseAgent):
                 if response_item:
                     response_text = response_item['text']
                     voice = response_item['voice']
-                    # self.logger.debug(f"Transmitting response: {response_text}")
                     audio_file = self._text_to_speech(response_text, voice)
                     if audio_file:
                         self._play_audio(audio_file)
@@ -289,7 +425,7 @@ class AudioTransmitterAgent(BaseAgent):
                 if phrase.lower() in transcription_lower:
                     self.active_persona = persona_name
                     self.last_interaction_time = datetime.now()
-                    self.logger.info(f"Activated persona '{self.active_persona}' via activation phrase.")
+                    self.logger.info(f"Activated persona '{self.active_persona}' via '{phrase}'.")
                     return self.active_persona
 
         # If we already have an active persona, check conversation timeout
@@ -311,7 +447,7 @@ class AudioTransmitterAgent(BaseAgent):
             # If multiple are loaded, pick randomly
             self.active_persona = random.choice(list(self.personas.keys()))
             self.last_interaction_time = datetime.now()
-            self.logger.info(f"No activation phrase detected; randomly selected persona '{self.active_persona}'.")
+            self.logger.info(f"No activation phrase; randomly selected '{self.active_persona}'.")
             return self.active_persona
 
         return None
@@ -319,27 +455,27 @@ class AudioTransmitterAgent(BaseAgent):
     def _load_persona(self, persona_name: str):
         """Load a single persona from the specified profile."""
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-        personas_dir = os.path.join(project_root, 'personas', self.profile_name)  # Add self.profile_name to the path
-        persona_file = os.path.join(personas_dir, f"{persona_name}.json")  # Construct full path to persona file
-    
+        personas_dir = os.path.join(project_root, 'personas', self.profile_name)
+        persona_file = os.path.join(personas_dir, f"{persona_name}.json")
+
         if not os.path.exists(persona_file):
             self.logger.error(f"Persona file '{persona_file}' does not exist.")
             return {}
-    
+
         try:
             with open(persona_file, 'r') as f:
                 data = json.load(f)
             prompt = data.get('prompt', '')
             voices = data.get('voices', {})
             activation_phrases = data.get('activation_phrases', [])
-    
+
             # Check for duplicate activation phrases
             for phrase in activation_phrases:
                 if phrase.lower() in self.activation_phrases_set:
                     self.logger.error(f"Duplicate activation phrase '{phrase}' in persona '{persona_name}'.")
                     continue
                 self.activation_phrases_set.add(phrase.lower())
-    
+
             return {
                 'prompt': prompt,
                 'voices': voices,
@@ -348,20 +484,20 @@ class AudioTransmitterAgent(BaseAgent):
         except Exception as e:
             self.logger.error(f"Error loading persona '{persona_name}': {e}")
             return {}
-    
+
     def _load_all_personas(self):
         """Scan the profiles folder and load all profiles."""
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
         profiles_dir = os.path.join(project_root, 'profiles')
         profile_dirs = [d for d in os.listdir(profiles_dir) if os.path.isdir(os.path.join(profiles_dir, d))]
-    
+
         for profile in profile_dirs:
             persona_file = os.path.join(profiles_dir, profile, f"{profile}.json")
             if os.path.exists(persona_file):
                 p_data = self._load_persona(profile)
                 if p_data:
                     self.personas[profile] = p_data
-    
+
     def _load_new_transcriptions(self):
         """Return list of (timestamp, transcription, tool_response, filename) for new JSON files."""
         results = []
@@ -413,7 +549,7 @@ class AudioTransmitterAgent(BaseAgent):
             self.conversation_history = self.conversation_history[-self.config.conversation_history_limit:]
 
     def _prepare_chat_messages(self, persona_data):
-        """Build messages array for ChatGPT completion."""
+        """Build messages array for GPT-based completions."""
         system_prompt = persona_data['prompt'].format(military_time=self._get_military_time())
         messages = [{'role': 'system', 'content': system_prompt}]
 
@@ -424,49 +560,14 @@ class AudioTransmitterAgent(BaseAgent):
             })
         return messages
 
-    def _generate_chat_completion(self, messages, responding_persona, original_ts):
-        """Calls OpenAI or ChatGPT to generate a response from the persona prompt + conversation history."""
-        if not self.client:
-            self.logger.error("OpenAI client is not available.")
-            return None
-        try:
-            completion = self.client.chat.completions.create(
-                model='gpt-3.5-turbo',
-                messages=messages
-            )
-            response_text = completion.choices[0].message.content.strip()
-            # self.logger.info(f"Generated response: {response_text[:60]} ...")
-            self.transcription_logger.info(f"{responding_persona} | {response_text}")
-
-            # Add as assistant message in conversation
-            self.conversation_history.append({
-                'timestamp': datetime.now(tz=original_ts.tzinfo),
-                'role': 'assistant',
-                'content': response_text
-            })
-            # Store for "self-response" checks
-            self.assistant_responses.append(response_text)
-            if len(self.assistant_responses) > 10:
-                self.assistant_responses = self.assistant_responses[-10:]
-            return response_text
-        except Exception as e:
-            self.logger.error(f"Error generating response: {e}")
-            return None
-
     def _text_to_speech(self, text: str, voice_id: Optional[str]):
-        """
-        Convert text to speech using self.tts_service.
-        Return a WAV file path or None on failure.
-        """
+        """Convert text to speech using self.tts_service. Return a WAV/MP3 file path or None."""
         if not text:
             return None
         if not self.tts_service:
             self.logger.error("No TTS service configured!")
             return None
-
-        # Synthesize text (this calls OpenAITTSService or UnrealSpeechTTSService)
-        wav_path = self.tts_service.synthesize_text(text, voice_id, debug_mode=self.debug_mode)
-        return wav_path
+        return self.tts_service.synthesize_text(text, voice_id, debug_mode=self.debug_mode)
 
     def _play_audio(self, audio_file: str):
         """Lock the receiver, play the audio, then unlock. Optionally remove the file if not debug."""
@@ -487,7 +588,7 @@ class AudioTransmitterAgent(BaseAgent):
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Error playing audio: {e}")
         finally:
-            time.sleep(1)
+            time.sleep(1.5)
             self._remove_lock()
             if not self.debug_mode and os.path.exists(audio_file):
                 os.remove(audio_file)
@@ -499,7 +600,6 @@ class AudioTransmitterAgent(BaseAgent):
             f.write(f"User: {transcription}\n")
             f.write(f"{persona_name}: {response}\n")
             f.write("-" * 40 + "\n")
-    
 
     def _create_lock(self):
         """Create a lock file to signal the receiver to pause."""
@@ -509,10 +609,9 @@ class AudioTransmitterAgent(BaseAgent):
     def _remove_lock(self):
         """Remove the lock file to signal the receiver to resume after a small delay."""
         if os.path.exists(LOCK_FILE):
-            time.sleep(1)  # Delay to allow the playback to fully finish
+            time.sleep(1)
             os.remove(LOCK_FILE)
-            # self.logger.info("Lock file removed. Receiver can resume.")
-    
+
     def _get_military_time(self):
         return datetime.now().strftime('%H:%M')
 

@@ -117,7 +117,7 @@ class AudioReceiverAgent(BaseAgent):
                 callback=self._audio_callback
             )
             self.stream.start()
-            self.logger.info("AudioReceiverAgent stream started.")
+            # self.logger.info("AudioReceiverAgent stream started.")
         except Exception as e:
             self.logger.error(f"Error starting audio receiver: {e}")
             raise
