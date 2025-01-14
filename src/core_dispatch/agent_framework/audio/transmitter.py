@@ -254,11 +254,11 @@ class AudioTransmitterAgent(BaseAgent):
                     final_user_text_lines_pass1 = []
                     for line in lines_pass1:
                         line_stripped = line.strip()
-                        if line_stripped.startswith("SAY:"):
+                        # if line_stripped.startswith("SAY:"):
                             # Immediate TTS
-                            say_text = line_stripped.replace("SAY:", "").strip()
-                            self._speak_immediately(say_text)
-                            continue
+                            # say_text = line_stripped.replace("SAY:", "").strip()
+                            # self._speak_immediately(say_text)
+                            # continue
                         if line_stripped.startswith("TOOL_CALL"):
                             tool_result = self._invoke_tool(line_stripped)
                             continue
