@@ -10,7 +10,7 @@
 ---
 # What is Core Dispatch?
 
-- AI module that bridges classic handheld radios and modern AI (GPT-based).
+- AI service(s) that bridge classic handheld radios and modern AI systems.
 - Listens for incoming transmissions, transcribes via Whisper/Chirp.
 - Generates persona-specific responses (e.g., "The Dude").
 - Converts AI response to speech, transmits back over radio (VOX).

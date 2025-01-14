@@ -165,7 +165,6 @@ cython_debug/
 # core-dispatch ignores
 conversation_log.txt
 debug/
-docs/
 env.sh
 src.sh
 src/core_dispatch/data/
