@@ -38,7 +38,7 @@ Core Dispatch is an **AI-driven radio communication system** that blends classic
 - **Audio Cables**  
 - **VOX Mode** enabled on the TX radio
 
-For an example wiring diagram and more details, see the [Developer Guide](./DEV_GUIDE.md#2-hardware--equipment-setup).
+For an example wiring diagram and more details, see the [Developer Guide](./docs/DEV_GUIDE.md#2-hardware--equipment-setup).
 
 ---
 
