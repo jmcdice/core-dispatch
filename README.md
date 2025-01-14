@@ -147,7 +147,7 @@ Please follow coding style guidelines and provide docstrings for new classes or 
 
 ## Further Documentation
 
-For a more in-depth look at code structure, class responsibilities, and customization tips, check out our **[Developer Guide](./DEV_GUIDE.md)**.
+For a more in-depth look at code structure, class responsibilities, and customization tips, check out our **[Developer Guide](./docs/DEV_GUIDE.md)**.
 
 Feel free to open issues or discussions if you have questions, suggestions, or feature requests!
 
