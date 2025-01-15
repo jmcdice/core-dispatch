@@ -56,7 +56,7 @@ class InventoryLookupTool:
         Helper method to format the response string for the user.
         """
         if data.get("discontinued", False):
-            return f"{item} is discontinued."
+            return f"{item} have been discontinued."
         else:
             return f"{data['quantity']} in aisle {data['aisle']}"
 

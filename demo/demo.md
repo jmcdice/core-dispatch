@@ -91,8 +91,11 @@ Interact:
 
 Interact:
    - "Warehouse, do we have organic almond milk?"
+      Answer: 10 units in isle 5
    - "Warehouse, do we have signature coffee?"
+      Answer: 24 units in isle 12
    - "Warehouse, do we have paddle boards?"
+      Answer: Discontinued 
 Observe:
    - AI performs 'TOOL_CALL InventoryLookupTool: lookup <item>'
    - Responds with quantity & aisle
@@ -124,9 +127,9 @@ Interact:
   - System architecture & conversation flow
   - Three demo personas: The Dude, Warehouse, Emergency Response
 - Total cost ≈ $200 for Pi + radios + cables
-- Source code on GitHub (link here)
+- Source code on GitHub: https://jmcdice.github.io
   - Next up: SaaS Dashboard
+  - Local infrance: Nvidia Orin Nano Jetson ($249)
 - Questions? Suggestions?
-  - Boulder AI Meetup
-  - Contact info: https://jmcdice.github.io
+  - Thanks Boulder AI Meetup!!
 
