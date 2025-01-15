@@ -21,24 +21,25 @@
 
 - Curiosity: merging old-school radio comms with cutting-edge AI
 - Just exploring new frontiers in voice + GPT integration 
-- MVP approach:
+- MVP approach (let's make this cheap):
   - Baofeng radios are cheap and widely used.
   - Raspberry Pi is a flexible, low-cost platform.
 - Potential use-cases:
-  - Any organizationt that uses radio's for work.
-  - Construction sites
-  - Any facilities 
+  - AI buddy: The Dude, Professor 
   - Warehouse/inventory Q&A (tools)
   - Emergency dispatch 
+  - Construction sites
+  - Campus facilities 
+  - Surf Report: agent 
   - Space: Launch control, ISS, moon base
-  - AI buddy to chat with “The Dude” or a "Professor", whatever. 
+  - Military
 
 ---
 # Hardware Setup & Cost
 
-- Raspberry Pi (4/5) ≈ $80–$90
+- Raspberry Pi (5) ≈ $90
 - 3x Baofeng radios ≈ $70 total
-  - 1 radio for Rx
+  - 1 radio for Rx 
   - 1 radio for Tx
   - 1 radio for the operator
 - USB sound card, audio cables ≈ $10–$15
@@ -48,43 +49,26 @@
   - Always follow local regulations
 
 ---
-# System Overview
-
-- **AudioReceiverAgent** 
-  - VAD-based listening, transcribes speech → text
-- **Transcription Service** 
-  - Whisper / Google Chirp
-- **AudioTransmitterAgent** 
-  - Chooses persona
-  - Generates GPT-based response
-  - Converts to TTS
-  - Plays audio via VOX
-- **Persona System** 
-  - JSON-based config (the_dude.json, warehouse_worker.json, etc.)
-- **Tool Use** 
-  - Persona can call external tools (inventory lookups, etc.)
-
----
 # Conversation Flow Through Core Dispatch
 
 1. **User speaks over radio** → Pi hears on RX radio
 2. **Receiver Agent** detects audio, sends to STT (Whisper/Chirp)
-3. **Transcribed text** gets queued or stored
-4. **AudioTransmitterAgent** picks persona based on activation phrase (hey dude)
-5. **GPT-4** generates response (prompts + context)
+3. **Transcribed text** added to queue 
+4. **AudioTransmitterAgent** take from queue, activation phrase (hey dude) 
+5. **AI Chat API** generates response (persona prompts + user context)
 6. **Response** is parsed for any tool calls
-   - Inventory lookups, etc. 
+   - Inventory lookups
+   - Surf report
 7. **TTS service** (OpenAI or UnrealSpeech) synthesizes speech
-8. **VOX** triggers TX radio to broadcast final audio
+8. **VOX** play wav file -> triggers TX radio to broadcast -> final audio
 
 ---
-# Tools & Persona Access
+# Tools & Personas 
 
 - There are persona files which describe an AI persona.
-- Each persona can call different tools.
-- Example: Warehouse Worker persona → InventoryLookupTool
-  - Tool code in `tool_inventory_lookup.py`
-  - Wait for "TOOL_RESPONSE" before final user-facing answer
+  - voices, character
+- Add tool access in the persona file
+  - Warehouse Worker persona → InventoryLookupTool
 - Results in a two-pass conversation flow:
   - Pass #1: Gather data/output from the tool
   - Pass #2: GPT finalizes the user-facing output
