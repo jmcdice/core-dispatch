@@ -73,13 +73,13 @@ For an example wiring diagram and more details, see the [Developer Guide](./docs
 
 5. **Start the Receiver**  
    ```bash
-   python start_reciever.py
+   core-dispatch receiver
    ```
    - Continuously listens for audio on the RX radio input.
 
 6. **Start the Transmitter**  
    ```bash
-   python start_transmitter.py --profile the_dude
+   core-dispatch transmitter --profile the_dude
    ```
    - Chooses a persona profile (`the_dude`, `warehouse_worker`, `emg_response`, etc.).  
    - Transcribes text → GPT → TTS → plays audio over TX radio.
